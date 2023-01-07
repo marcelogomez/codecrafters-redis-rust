@@ -1,4 +1,4 @@
-use redis_starter_rust::resp_to_debug_str;
+use redis_starter_rust::parse_bulk_string_array;
 #[allow(unused_imports)]
 use std::env;
 #[allow(unused_imports)]
@@ -38,26 +38,51 @@ async fn main() {
 }
 
 async fn handle_client(mut socket: TcpStream, addr: SocketAddr) {
-    eprintln!("Connected to addr {}", addr);
-    let mut ping_command = [0u8; 14];
-    while let Some(n) = socket.read(&mut ping_command).await.ok().filter(|&n| n > 0) {
-        match n {
-            // The PING command is an array with a single bulk string value that says ping:
-            // * <- it's an array (1 byte)
-            // 1\r\n <- length of the array is 1 (3 bytes)
-            // $ <- First element is a bulk string (1 byte)
-            // 4\r\n <- length of the string (3 bytes)
-            // ping <- string (4 bytes)
-            // \r\n <- terminate message (2 bytes)
-            // *1\r\n$4\r\nping\r\n  (14 bytes)
-            14 => {
-                eprintln!("Enough bytes read! {}", resp_to_debug_str(ping_command));
-                socket.write("+PONG\r\n".as_bytes()).await.unwrap();
-                socket.flush().await.unwrap();
+    eprintln!("Connected to client {}", addr);
+    let mut command_buf = [0u8; 4096];
+    loop {
+        match socket.read(&mut command_buf).await {
+            Ok(0) => {
+                eprintln!("Connection terminated by client {}", addr);
+                break;
             }
-            _ => {
-                eprintln!("Not enough bytes read! {}", resp_to_debug_str(ping_command));
+            Ok(n) => match handle_command(&command_buf[..n]) {
+                Ok(resp) => {
+                    socket.write(resp.as_bytes()).await.unwrap();
+                    socket.flush().await.unwrap();
+                }
+                Err(e) => {
+                    eprintln!("Error while handling command\n{}", e);
+                }
+            },
+            Err(e) => {
+                eprintln!("Error while reading data from client {}\n{}", addr, e);
+                break;
             }
         }
+    }
+}
+
+fn handle_command(command_buf: &[u8]) -> Result<String, String> {
+    let (command, _) = parse_bulk_string_array(&command_buf)?;
+
+    if command.is_empty() {
+        return Err("Empty command".into());
+    }
+
+    Ok(gen_response(command[0].as_str(), &command[1..])?)
+}
+
+fn gen_response(command: &str, args: &[String]) -> Result<String, String> {
+    match command {
+        "ECHO" | "echo" => {
+            if args.is_empty() {
+                return Err("No message to ECHO".to_string());
+            }
+            let message = &args[0];
+            Ok(format!("${}\r\n{}\r\n", message.len(), message))
+        }
+        "PING" | "ping" => Ok("+PONG\r\n".to_string()),
+        c => Err(format!("Unknown command {}", c)),
     }
 }
