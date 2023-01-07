@@ -1,3 +1,4 @@
+use redis_starter_rust::resp_to_debug_str;
 #[allow(unused_imports)]
 use std::env;
 #[allow(unused_imports)]
@@ -5,8 +6,6 @@ use std::fs;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
-use redis_starter_rust::resp_to_debug_str;
-
 
 #[tokio::main]
 async fn main() {
