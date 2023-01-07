@@ -5,6 +5,8 @@ use std::fs;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
+use redis_starter_rust::resp_to_debug_str;
+
 
 #[tokio::main]
 async fn main() {
@@ -20,15 +22,16 @@ async fn main() {
             //         // $ <- First element is a bulk string (1 byte)
             //         // 4\r\n <- length of the string (3 bytes)
             //         // ping <- string (4 bytes)
-            //         // \r\n <- terminate message (3 bytes)
-            //         // *1\r\n$4\r\nping\r\n  (15 bytes)
+            //         // \r\n <- terminate message (2 bytes)
+            //         // *1\r\n$4\r\nping\r\n  (14 bytes)
             match socket.read(&mut ping_command).await {
-                Ok(15) => {
+                Ok(14) => {
+                    eprintln!("Enough bytes read! {}", resp_to_debug_str(ping_command));
                     socket.write("+PONG\r\n".as_bytes()).await.unwrap();
                     socket.flush().await.unwrap();
                 }
                 Ok(_) => {
-                    eprintln!("Not enough bytes read!");
+                    eprintln!("Not enough bytes read! {}", resp_to_debug_str(ping_command));
                 }
                 Err(e) => {
                     eprintln!("Failed to read from socket {:?}", e);
