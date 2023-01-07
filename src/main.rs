@@ -15,7 +15,7 @@ async fn main() {
     match listener.accept().await {
         Ok((mut socket, addr)) => {
             println!("Connected to addr {}", addr);
-            let mut ping_command = [0u8; 15];
+            let mut ping_command = [0u8; 14];
             //         // The PING command is an array with a single bulk string value that says ping:
             //         // * <- it's an array (1 byte)
             //         // 1\r\n <- length of the array is 1 (3 bytes)
