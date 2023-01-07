@@ -23,17 +23,19 @@ async fn main() {
             //         // ping <- string (4 bytes)
             //         // \r\n <- terminate message (2 bytes)
             //         // *1\r\n$4\r\nping\r\n  (14 bytes)
-            match socket.read(&mut ping_command).await {
-                Ok(14) => {
-                    eprintln!("Enough bytes read! {}", resp_to_debug_str(ping_command));
-                    socket.write("+PONG\r\n".as_bytes()).await.unwrap();
-                    socket.flush().await.unwrap();
-                }
-                Ok(_) => {
-                    eprintln!("Not enough bytes read! {}", resp_to_debug_str(ping_command));
-                }
-                Err(e) => {
-                    eprintln!("Failed to read from socket {:?}", e);
+            loop {
+                match socket.read(&mut ping_command).await {
+                    Ok(14) => {
+                        eprintln!("Enough bytes read! {}", resp_to_debug_str(ping_command));
+                        socket.write("+PONG\r\n".as_bytes()).await.unwrap();
+                        socket.flush().await.unwrap();
+                    }
+                    Ok(_) => {
+                        eprintln!("Not enough bytes read! {}", resp_to_debug_str(ping_command));
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to read from socket {:?}", e);
+                    }
                 }
             }
         }
