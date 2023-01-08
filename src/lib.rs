@@ -121,6 +121,36 @@ impl RESPValue {
             }
         }
     }
+
+    fn data_type(&self) -> RESPDataType {
+        match self {
+            RESPValue::Integer(_) => RESPDataType::Integer,
+            RESPValue::BulkString(_) => RESPDataType::BulkString,
+            RESPValue::SimpleString(_) => RESPDataType::SimpleString,
+            RESPValue::Error(_) => RESPDataType::Error,
+            RESPValue::Array(_) => RESPDataType::Array,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum RESPValueConversionError {
+    // (expected, actual)
+    DataTypeMismatch(RESPDataType, RESPDataType),
+}
+
+impl TryFrom<RESPValue> for i64 {
+    type Error = RESPValueConversionError;
+
+    fn try_from(value: RESPValue) -> Result<Self, Self::Error> {
+        match value {
+            RESPValue::Integer(i) => Ok(i),
+            v => Err(RESPValueConversionError::DataTypeMismatch(
+                RESPDataType::Integer,
+                v.data_type(),
+            )),
+        }
+    }
 }
 
 /// Takes in a stream of bytes that represent a RESP message
@@ -510,6 +540,24 @@ mod test {
         assert_eq!(
             RESPValue::parse("+ERROR\r".as_bytes()),
             Err(ParseError::MissingCLRF),
+        );
+    }
+
+    #[test]
+    fn test_try_into_i64() {
+        assert_eq!(i64::try_from(RESPValue::Integer(123)), Ok(123));
+    }
+
+    #[test]
+    fn test_try_into_i64_err() {
+        assert_eq!(
+            i64::try_from(RESPValue::SimpleString("123".to_string())),
+            Err(RESPValueConversionError::DataTypeMismatch(RESPDataType::Integer, RESPDataType::SimpleString)),
+        );
+
+        assert_eq!(
+            i64::try_from(RESPValue::Array(None)),
+            Err(RESPValueConversionError::DataTypeMismatch(RESPDataType::Integer, RESPDataType::Array)),
         );
     }
 }
