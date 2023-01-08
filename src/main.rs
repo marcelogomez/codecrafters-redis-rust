@@ -64,7 +64,8 @@ async fn handle_client(mut socket: TcpStream, addr: SocketAddr) {
 }
 
 fn handle_command(command_buf: &[u8]) -> Result<String, String> {
-    let (command, _) = parse_bulk_string_array(&command_buf)?;
+    // TODO: improve error types here + add display format for parse error
+    let (command, _) = parse_bulk_string_array(&command_buf).map_err(|e| format!("{:?}", e))?;
 
     if command.is_empty() {
         return Err("Empty command".into());

@@ -9,20 +9,17 @@ pub enum RESPDataType {
     Array,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub struct UnknownRESPDataType(pub char);
-
 impl TryFrom<u8> for RESPDataType {
-    type Error = UnknownRESPDataType;
+    type Error = ParseError;
 
-    fn try_from(value: u8) -> Result<Self, UnknownRESPDataType> {
+    fn try_from(value: u8) -> ParseResult<Self> {
         match value {
             b'+' => Ok(Self::SimpleString),
             b'-' => Ok(Self::Error),
             b':' => Ok(Self::Integer),
             b'$' => Ok(Self::BulkString),
             b'*' => Ok(Self::Array),
-            c => Err(UnknownRESPDataType(c as char)),
+            c => Err(ParseError::UnknownDataType(c as char)),
         }
     }
 }
@@ -39,6 +36,20 @@ impl Into<u8> for RESPDataType {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub enum ParseError {
+    UnknownDataType(char),
+    // (expected, actual)
+    UnexpectedDataType(RESPDataType, RESPDataType),
+    // bytes stream terminated before expected
+    NotEnoughBytes,
+    UnexpectedNonNumericCharacter(char),
+    MissingCLRF,
+    NegativeValueLength,
+}
+
+type ParseResult<T> = Result<T, ParseError>;
+
 /// Takes in a stream of bytes that represent a RESP message
 /// and turns it into a printable debug string that escapes all the special characters
 pub fn resp_to_debug_str(bytes: impl IntoIterator<Item = u8>) -> String {
@@ -54,16 +65,15 @@ pub fn resp_to_debug_str(bytes: impl IntoIterator<Item = u8>) -> String {
 }
 
 // Checks that bytes starts with a CLRF, returns the remaining bytes
-fn validate_clrf(bytes: &[u8]) -> Result<&[u8], &'static str> {
+fn validate_clrf(bytes: &[u8]) -> ParseResult<&[u8]> {
     match bytes {
         [b'\r', b'\n', rest @ ..] => Ok(rest),
-        [] => Err("Expected CLRF, found empty set"),
-        _ => Err("Expected CLRF"),
+        _ => Err(ParseError::MissingCLRF),
     }
 }
 
 // Parses a clrf terminated number, returns the remaining bytes
-fn parse_num_inner(mut bytes: &[u8]) -> Result<(i64, &[u8]), &'static str> {
+fn parse_num_inner(mut bytes: &[u8]) -> ParseResult<(i64, &[u8])> {
     let mut num: i64 = 0;
 
     // Deal with negative numbers
@@ -75,7 +85,7 @@ fn parse_num_inner(mut bytes: &[u8]) -> Result<(i64, &[u8]), &'static str> {
     while !bytes.is_empty() && bytes[0] != b'\r' {
         let digit = bytes[0];
         if digit < b'0' || digit > b'9' {
-            return Err("Non-numeric digit found while parsing number");
+            return Err(ParseError::UnexpectedNonNumericCharacter(bytes[0] as char));
         }
         num = num * 10 + (digit - b'0') as i64;
         bytes = &bytes[1..];
@@ -88,49 +98,57 @@ fn parse_num_inner(mut bytes: &[u8]) -> Result<(i64, &[u8]), &'static str> {
     Ok((num, validate_clrf(bytes)?))
 }
 
-fn parse_bulk_string_inner(bytes: &[u8], len: usize) -> Result<(String, &[u8]), &'static str> {
+fn parse_bulk_string_inner(bytes: &[u8], len: usize) -> ParseResult<(String, &[u8])> {
     if bytes.len() <= len {
-        return Err("Not enough bytes for bulk string");
+        return Err(ParseError::NotEnoughBytes);
     }
     let s: String = bytes[..len].iter().map(|&c| c as char).collect();
     Ok((s, validate_clrf(&bytes[len..])?))
 }
 
-pub fn parse_bulk_string(bytes: &[u8]) -> Result<(String, &[u8]), &'static str> {
+pub fn parse_bulk_string(bytes: &[u8]) -> ParseResult<(String, &[u8])> {
     if bytes.is_empty() {
-        return Err("Expected bulk string, found empty bytes");
+        return Err(ParseError::NotEnoughBytes);
     }
 
-    if bytes[0] != b'$' {
-        return Err("This is not an array");
+    let data_type = RESPDataType::try_from(bytes[0])?;
+    if data_type != RESPDataType::BulkString {
+        return Err(ParseError::UnexpectedDataType(
+            RESPDataType::Array,
+            data_type,
+        ));
     }
 
     let (len, bytes) = parse_num_inner(&bytes[1..])?;
     if len < 0 {
-        Err("Bulk String length cannot be negative")
+        Err(ParseError::NegativeValueLength)
     } else {
         parse_bulk_string_inner(bytes, len as usize)
     }
 }
 
-fn parse_array_len(bytes: &[u8]) -> Result<(usize, &[u8]), &'static str> {
+fn parse_array_len(bytes: &[u8]) -> ParseResult<(usize, &[u8])> {
     if bytes.is_empty() {
-        return Err("Expected array, found empty bytes");
+        return Err(ParseError::NotEnoughBytes);
     }
 
-    if bytes[0] != b'*' {
-        return Err("This is not an array");
+    let data_type = RESPDataType::try_from(bytes[0])?;
+    if data_type != RESPDataType::Array {
+        return Err(ParseError::UnexpectedDataType(
+            RESPDataType::Array,
+            data_type,
+        ));
     }
 
     let (len, bytes) = parse_num_inner(&bytes[1..])?;
     if len < 0 {
-        Err("Array length cannot be negative")
+        Err(ParseError::NegativeValueLength)
     } else {
         Ok((len as usize, bytes))
     }
 }
 
-pub fn parse_bulk_string_array(bytes: &[u8]) -> Result<(Vec<String>, &[u8]), &'static str> {
+pub fn parse_bulk_string_array(bytes: &[u8]) -> ParseResult<(Vec<String>, &[u8])> {
     let (len, mut bytes) = parse_array_len(bytes)?;
 
     let mut array = Vec::with_capacity(len as usize);
@@ -164,7 +182,7 @@ mod test {
     fn test_parse_bulk_string_negative_len() {
         assert_eq!(
             parse_bulk_string("$-5\r\nhello\r\nrest".as_bytes()),
-            Err("Bulk String length cannot be negative"),
+            Err(ParseError::NegativeValueLength),
         );
     }
 
@@ -172,7 +190,7 @@ mod test {
     fn test_parse_bulk_string_len_missing_clrf() {
         assert_eq!(
             parse_bulk_string("$5hello\r\nrest".as_bytes()),
-            Err("Non-numeric digit found while parsing number"),
+            Err(ParseError::UnexpectedNonNumericCharacter('h'))
         );
     }
 
@@ -180,7 +198,7 @@ mod test {
     fn test_parse_bulk_string_not_enough_bytes() {
         assert_eq!(
             parse_bulk_string("$5\r\nhell".as_bytes()),
-            Err("Not enough bytes for bulk string"),
+            Err(ParseError::NotEnoughBytes),
         );
     }
 
@@ -188,17 +206,17 @@ mod test {
     fn test_parse_bulk_string_missing_clrf_termination() {
         assert_eq!(
             parse_bulk_string("$5\r\nhello".as_bytes()),
-            Err("Not enough bytes for bulk string"),
+            Err(ParseError::NotEnoughBytes),
         );
 
         assert_eq!(
             parse_bulk_string("$5\r\nhelloooo".as_bytes()),
-            Err("Expected CLRF"),
+            Err(ParseError::MissingCLRF),
         );
 
         assert_eq!(
             parse_bulk_string("$5\r\nhelloooo\r\n".as_bytes()),
-            Err("Expected CLRF"),
+            Err(ParseError::MissingCLRF),
         );
     }
 
@@ -225,7 +243,7 @@ mod test {
     fn test_parse_bulk_string_array_negative_len() {
         assert_eq!(
             parse_bulk_string_array("*-2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes()),
-            Err("Array length cannot be negative"),
+            Err(ParseError::NegativeValueLength),
         );
     }
 
@@ -233,7 +251,7 @@ mod test {
     fn test_parse_bulk_string_array_too_few_elements() {
         assert_eq!(
             parse_bulk_string_array("*2\r\n$5\r\nhello\r\n".as_bytes()),
-            Err("Expected bulk string, found empty bytes"),
+            Err(ParseError::NotEnoughBytes),
         );
     }
 
@@ -241,7 +259,7 @@ mod test {
     fn test_parse_bulk_string_array_malformed_element() {
         assert_eq!(
             parse_bulk_string_array("*2\r\n$5\r\nhelloooo\r\n$5\r\nworld\r\n".as_bytes()),
-            Err("Expected CLRF"),
+            Err(ParseError::MissingCLRF),
         );
     }
 
@@ -256,8 +274,14 @@ mod test {
 
     #[test]
     fn test_parse_data_type_error() {
-        assert_eq!(RESPDataType::try_from(b'x'), Err(UnknownRESPDataType('x')));
-        assert_eq!(RESPDataType::try_from(b'a'), Err(UnknownRESPDataType('a')));
+        assert_eq!(
+            RESPDataType::try_from(b'x'),
+            Err(ParseError::UnknownDataType('x'))
+        );
+        assert_eq!(
+            RESPDataType::try_from(b'a'),
+            Err(ParseError::UnknownDataType('a'))
+        );
     }
 
     fn do_test_data_type_to_byte(t: RESPDataType, expected: u8) {
