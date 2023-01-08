@@ -89,6 +89,22 @@ impl std::fmt::Display for RESPValue {
 }
 
 impl RESPValue {
+    pub fn bulk_string(s: Option<String>) -> Self {
+        Self::BulkString(s)
+    }
+
+    pub fn simple_string(s: String) -> Self {
+        Self::SimpleString(s)
+    }
+
+    pub fn error(s: String) -> Self {
+        Self::Error(s)
+    }
+
+    pub fn integer(i: i64) -> Self {
+        Self::Integer(i)
+    }
+
     pub fn parse<'a>(bytes: &'a (impl AsRef<[u8]> + ?Sized)) -> ParseResult<(Self, &'a [u8])> {
         let bytes = bytes.as_ref();
         let (data_type, bytes) = RESPDataType::from_bytes(bytes)?;
@@ -150,15 +166,15 @@ impl RESPValue {
                 write!(f, "$-1")?;
             }
             Self::Error(s) => {
-                write!(f, "+{}", s)?;
+                write!(f, "-{}", s)?;
             }
             Self::SimpleString(s) => {
-                write!(f, "-{}", s)?;
+                write!(f, "+{}", s)?;
             }
             Self::Array(Some(values)) => {
                 write!(f, "*{}{}", values.len(), clrf)?;
                 for v in values {
-                    write!(f, "{}", v)?;
+                    v.format(f, clrf)?;
                 }
             }
             Self::Array(None) => {

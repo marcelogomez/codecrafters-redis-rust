@@ -58,7 +58,8 @@ async fn handle_client(mut socket: TcpStream, addr: SocketAddr, table: Table) {
             }
             Ok(n) => match handle_command(&command_buf[..n], table.clone()) {
                 Ok(resp) => {
-                    socket.write(resp.as_bytes()).await.unwrap();
+                    eprintln!("Sending response {:?}", resp);
+                    socket.write(format!("{}", resp).as_bytes()).await.unwrap();
                     socket.flush().await.unwrap();
                 }
                 Err(e) => {
@@ -73,7 +74,7 @@ async fn handle_client(mut socket: TcpStream, addr: SocketAddr, table: Table) {
     }
 }
 
-fn handle_command(command_buf: &[u8], table: Table) -> Result<String, String> {
+fn handle_command(command_buf: &[u8], table: Table) -> Result<RESPValue, String> {
     let (resp_value, _) = RESPValue::parse(command_buf).map_err(|e| format!("{:?}", e))?;
     eprintln!("Received command: {:?}", resp_value);
     // TODO: Make this easier
@@ -91,7 +92,7 @@ fn handle_command(command_buf: &[u8], table: Table) -> Result<String, String> {
     )?)
 }
 
-fn gen_response(command: &String, args: &[BulkString], table: Table) -> Result<String, String> {
+fn gen_response(command: &String, args: &[BulkString], table: Table) -> Result<RESPValue, String> {
     eprintln!("Handling command: {}", command);
     match command.as_str() {
         "ECHO" | "echo" => {
@@ -100,7 +101,7 @@ fn gen_response(command: &String, args: &[BulkString], table: Table) -> Result<S
             }
             // TODO: Make this easier
             let message = args[0].as_ref().map(|s| s.as_str()).unwrap_or_default();
-            Ok(format!("${}\r\n{}\r\n", message.len(), message))
+            Ok(RESPValue::bulk_string(Some(message.to_string())))
         }
         "SET" | "set" => {
             let mut args = args.into_iter();
@@ -116,19 +117,17 @@ fn gen_response(command: &String, args: &[BulkString], table: Table) -> Result<S
 
             eprintln!("SET {} {}", key, value);
 
-            let resp = match table.write() {
+            Ok(match table.write() {
                 Ok(mut t) => {
                     t.insert(key.to_string(), value.to_string());
-                    format!("+OK\r\n")
+                    RESPValue::simple_string("OK".to_string())
                 }
                 Err(e) => {
                     eprintln!("Failed to acquire lock for table {}", e);
                     // TODO: Make error handling simpler
-                    format!("$-1\r\n")
+                    RESPValue::bulk_string(None)
                 }
-            };
-            eprintln!("RESPONSE: {}", resp);
-            Ok(resp)
+            })
         }
         "GET" | "get" => {
             let mut args = args.into_iter();
@@ -140,18 +139,16 @@ fn gen_response(command: &String, args: &[BulkString], table: Table) -> Result<S
 
             eprintln!("GET {}", key);
 
-            let resp = match table.read() {
+            match table.read() {
                 Ok(t) => match t.get(key) {
-                    Some(value) => Ok(format!("${}\r\n{}\r\n", value.len(), value)),
-                    None => Ok(format!("$-1\r\n")),
+                    Some(value) => Ok(RESPValue::bulk_string(Some(value.to_string()))),
+                    None => Ok(RESPValue::bulk_string(None)),
                 },
                 // TODO: Read up on error handling
                 Err(e) => Err(format!("Failed to acquire lock for table {}", e)),
-            }?;
-            eprintln!("RESPONSE: {}", resp);
-            Ok(resp)
+            }
         }
-        "PING" | "ping" => Ok("+PONG\r\n".to_string()),
+        "PING" | "ping" => Ok(RESPValue::SimpleString("PONG".to_string())),
         c => Err(format!("Unknown command {}", c)),
     }
 }
