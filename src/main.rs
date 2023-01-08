@@ -9,12 +9,14 @@ use std::fs;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::time::Duration;
+use std::time::Instant;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
-type Table = Arc<RwLock<HashMap<String, String>>>;
+type Table = Arc<RwLock<HashMap<String, (String, Option<(Instant, Duration)>)>>>;
 
 #[tokio::main]
 async fn main() {
@@ -119,7 +121,7 @@ fn gen_response(command: &String, args: &[BulkString], table: Table) -> Result<R
 
             Ok(match table.write() {
                 Ok(mut t) => {
-                    t.insert(key.to_string(), value.to_string());
+                    t.insert(key.to_string(), (value.to_string(), None));
                     RESPValue::simple_string("OK".to_string())
                 }
                 Err(e) => {
@@ -141,7 +143,9 @@ fn gen_response(command: &String, args: &[BulkString], table: Table) -> Result<R
 
             match table.read() {
                 Ok(t) => match t.get(key) {
-                    Some(value) => Ok(RESPValue::bulk_string(Some(value.to_string()))),
+                    Some((value, _expiry_info)) => {
+                        Ok(RESPValue::bulk_string(Some(value.to_string())))
+                    }
                     None => Ok(RESPValue::bulk_string(None)),
                 },
                 // TODO: Read up on error handling
