@@ -1,4 +1,7 @@
-use std::convert::{TryFrom, TryInto};
+use std::{
+    borrow::Borrow,
+    convert::{TryFrom, TryInto},
+};
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum RESPDataType {
@@ -80,7 +83,8 @@ enum RESPValue {
 }
 
 impl RESPValue {
-    fn parse(bytes: &[u8]) -> ParseResult<(Self, &[u8])> {
+    fn parse<'a>(bytes: &'a (impl AsRef<[u8]> + ?Sized)) -> ParseResult<(Self, &'a [u8])> {
+        let bytes = bytes.as_ref();
         let (data_type, bytes) = RESPDataType::from_bytes(bytes)?;
         match data_type {
             RESPDataType::Integer => {
@@ -231,7 +235,7 @@ mod test {
     #[test]
     fn test_parse_bulk_string() {
         assert_eq!(
-            RESPValue::parse("$5\r\nhello\r\nrest".as_bytes()),
+            RESPValue::parse("$5\r\nhello\r\nrest"),
             Ok((
                 RESPValue::BulkString(Some("hello".to_string())),
                 "rest".as_bytes()
@@ -239,7 +243,7 @@ mod test {
         );
 
         assert_eq!(
-            RESPValue::parse("$5\r\nhello\r\n".as_bytes()),
+            RESPValue::parse("$5\r\nhello\r\n"),
             Ok((
                 RESPValue::BulkString(Some("hello".to_string())),
                 "".as_bytes()
@@ -250,7 +254,7 @@ mod test {
     #[test]
     fn test_parse_null_bulk_string() {
         assert_eq!(
-            RESPValue::parse("$-1\r\nrest".as_bytes()),
+            RESPValue::parse("$-1\r\nrest"),
             Ok((RESPValue::BulkString(None), "rest".as_bytes())),
         );
     }
@@ -258,7 +262,7 @@ mod test {
     #[test]
     fn test_parse_bulk_string_negative_len() {
         assert_eq!(
-            RESPValue::parse("$-5\r\nhello\r\nrest".as_bytes()),
+            RESPValue::parse("$-5\r\nhello\r\nrest"),
             Err(ParseError::NegativeValueLength),
         );
     }
@@ -266,7 +270,7 @@ mod test {
     #[test]
     fn test_parse_bulk_string_len_missing_clrf() {
         assert_eq!(
-            RESPValue::parse("$5hello\r\nrest".as_bytes()),
+            RESPValue::parse("$5hello\r\nrest"),
             Err(ParseError::UnexpectedNonNumericCharacter('h'))
         );
     }
@@ -274,7 +278,7 @@ mod test {
     #[test]
     fn test_parse_bulk_string_not_enough_bytes() {
         assert_eq!(
-            RESPValue::parse("$5\r\nhell".as_bytes()),
+            RESPValue::parse("$5\r\nhell"),
             Err(ParseError::NotEnoughBytes),
         );
     }
@@ -282,17 +286,17 @@ mod test {
     #[test]
     fn test_parse_bulk_string_missing_clrf_termination() {
         assert_eq!(
-            RESPValue::parse("$5\r\nhello".as_bytes()),
+            RESPValue::parse("$5\r\nhello"),
             Err(ParseError::NotEnoughBytes),
         );
 
         assert_eq!(
-            RESPValue::parse("$5\r\nhelloooo".as_bytes()),
+            RESPValue::parse("$5\r\nhelloooo"),
             Err(ParseError::MissingCLRF),
         );
 
         assert_eq!(
-            RESPValue::parse("$5\r\nhelloooo\r\n".as_bytes()),
+            RESPValue::parse("$5\r\nhelloooo\r\n"),
             Err(ParseError::MissingCLRF),
         );
     }
@@ -300,7 +304,7 @@ mod test {
     #[test]
     fn test_parse_array() {
         assert_eq!(
-            RESPValue::parse("*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes()),
+            RESPValue::parse("*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n"),
             Ok((
                 RESPValue::Array(Some(vec![
                     RESPValue::BulkString(Some("hello".to_string())),
@@ -311,7 +315,7 @@ mod test {
         );
 
         assert_eq!(
-            RESPValue::parse("*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes()),
+            RESPValue::parse("*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n"),
             Ok((
                 RESPValue::Array(Some(vec![
                     RESPValue::BulkString(Some("hello".to_string())),
@@ -325,7 +329,7 @@ mod test {
     #[test]
     fn test_parse_null_array() {
         assert_eq!(
-            RESPValue::parse("*-1\r\nrest".as_bytes()),
+            RESPValue::parse("*-1\r\nrest"),
             Ok((RESPValue::Array(None), "rest".as_bytes())),
         );
     }
@@ -333,7 +337,7 @@ mod test {
     #[test]
     fn test_parse_mixed_array() {
         assert_eq!(
-            RESPValue::parse("*4\r\n$5\r\nhello\r\n:123\r\n-ERROR\r\n+Simple\r\nrest".as_bytes()),
+            RESPValue::parse("*4\r\n$5\r\nhello\r\n:123\r\n-ERROR\r\n+Simple\r\nrest"),
             Ok((
                 RESPValue::Array(Some(vec![
                     RESPValue::BulkString(Some("hello".to_string())),
@@ -350,9 +354,7 @@ mod test {
     fn test_parse_nested_array() {
         assert_eq!(
             // [bulk(hello), [123, [456, simple(Simple)]]]
-            RESPValue::parse(
-                "*2\r\n$5\r\nhello\r\n*2\r\n:123\r\n*2\r\n:456\r\n+Simple\r\nrest".as_bytes()
-            ),
+            RESPValue::parse("*2\r\n$5\r\nhello\r\n*2\r\n:123\r\n*2\r\n:456\r\n+Simple\r\nrest"),
             Ok((
                 RESPValue::Array(Some(vec![
                     RESPValue::BulkString(Some("hello".to_string())),
@@ -372,7 +374,7 @@ mod test {
     #[test]
     fn test_parse_array_negative_len() {
         assert_eq!(
-            RESPValue::parse("*-2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes()),
+            RESPValue::parse("*-2\r\n$5\r\nhello\r\n$5\r\nworld\r\n"),
             Err(ParseError::NegativeValueLength),
         );
     }
@@ -380,7 +382,7 @@ mod test {
     #[test]
     fn test_parse_array_too_few_elements() {
         assert_eq!(
-            RESPValue::parse("*2\r\n$5\r\nhello\r\n".as_bytes()),
+            RESPValue::parse("*2\r\n$5\r\nhello\r\n"),
             Err(ParseError::NotEnoughBytes),
         );
     }
@@ -388,7 +390,7 @@ mod test {
     #[test]
     fn test_parse_array_malformed_element() {
         assert_eq!(
-            RESPValue::parse("*2\r\n$5\r\nhelloooo\r\n$5\r\nworld\r\n".as_bytes()),
+            RESPValue::parse("*2\r\n$5\r\nhelloooo\r\n$5\r\nworld\r\n"),
             Err(ParseError::MissingCLRF),
         );
     }
