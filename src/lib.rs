@@ -72,7 +72,9 @@ type ParseResult<T> = Result<T, ParseError>;
 #[derive(Debug, PartialEq)]
 enum RESPValue {
     Integer(i64),
+    // TODO: deal with null strings
     BulkString(String),
+    SimpleString(String),
 }
 
 impl RESPValue {
@@ -86,6 +88,10 @@ impl RESPValue {
             RESPDataType::BulkString => {
                 let (s, bytes) = parse_bulk_string_inner(bytes)?;
                 Ok((Self::BulkString(s), bytes))
+            }
+            RESPDataType::SimpleString => {
+                let (s, bytes) = parse_simple_string_contents(bytes)?;
+                Ok((Self::SimpleString(s), bytes))
             }
             t => panic!("Parsing for {:?} not yet implemented", t),
         }
@@ -140,6 +146,20 @@ fn parse_integer_value(mut bytes: &[u8]) -> ParseResult<(i64, &[u8])> {
     Ok((num, validate_clrf(bytes)?))
 }
 
+fn parse_simple_string_contents(mut bytes: &[u8]) -> ParseResult<(String, &[u8])> {
+    let mut s = String::new();
+    while let Err(_) = validate_clrf(bytes) {
+        s.push(bytes[0] as char);
+        bytes = &bytes[1..];
+
+        if bytes.is_empty() {
+            return Err(ParseError::MissingCLRF);
+        }
+    }
+
+    Ok((s, validate_clrf(bytes)?))
+}
+
 fn parse_bulk_string_inner(bytes: &[u8]) -> ParseResult<(String, &[u8])> {
     let (len, bytes) = parse_integer_value(&bytes)?;
     if len < 0 {
@@ -150,6 +170,7 @@ fn parse_bulk_string_inner(bytes: &[u8]) -> ParseResult<(String, &[u8])> {
     if bytes.len() <= len {
         return Err(ParseError::NotEnoughBytes);
     }
+
     let s: String = bytes[..len].iter().map(|&c| c as char).collect();
     Ok((s, validate_clrf(&bytes[len..])?))
 }
@@ -345,6 +366,35 @@ mod test {
         assert_eq!(
             RESPValue::parse(":12l23\r\n".as_bytes()),
             Err(ParseError::UnexpectedNonNumericCharacter('l')),
+        );
+    }
+
+    #[test]
+    fn test_parse_simple_string() {
+        assert_eq!(
+            RESPValue::parse("+OK\r\n".as_bytes()),
+            Ok((RESPValue::SimpleString("OK".to_string()), "".as_bytes())),
+        );
+    }
+
+    #[test]
+    fn test_parse_simple_string_with_intermediate_carriage_return() {
+        assert_eq!(
+            RESPValue::parse("+OK\rOK\r\n".as_bytes()),
+            Ok((RESPValue::SimpleString("OK\rOK".to_string()), "".as_bytes())),
+        );
+    }
+
+    #[test]
+    fn test_parse_simple_string_error() {
+        assert_eq!(
+            RESPValue::parse("+OK".as_bytes()),
+            Err(ParseError::MissingCLRF),
+        );
+
+        assert_eq!(
+            RESPValue::parse("+OKOKOK\r".as_bytes()),
+            Err(ParseError::MissingCLRF),
         );
     }
 }
