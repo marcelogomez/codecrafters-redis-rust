@@ -79,6 +79,7 @@ enum RESPValue {
     Array(Vec<RESPValue>),
 }
 
+
 impl RESPValue {
     fn parse(bytes: &[u8]) -> ParseResult<(Self, &[u8])> {
         let (data_type, bytes) = RESPDataType::from_bytes(bytes)?;
@@ -88,7 +89,7 @@ impl RESPValue {
                 Ok((Self::Integer(i), bytes))
             }
             RESPDataType::BulkString => {
-                let (s, bytes) = parse_bulk_string_inner(bytes)?;
+                let (s, bytes) = parse_bulk_string_contents(bytes)?;
                 Ok((Self::BulkString(s), bytes))
             }
             RESPDataType::SimpleString => {
@@ -178,13 +179,8 @@ fn parse_simple_string_contents(mut bytes: &[u8]) -> ParseResult<(String, &[u8])
     Ok((s, validate_clrf(bytes)?))
 }
 
-fn parse_bulk_string_inner(bytes: &[u8]) -> ParseResult<(String, &[u8])> {
-    let (len, bytes) = parse_integer_value(&bytes)?;
-    if len < 0 {
-        return Err(ParseError::NegativeValueLength);
-    }
-    let len = len as usize;
-
+fn parse_bulk_string_contents(bytes: &[u8]) -> ParseResult<(String, &[u8])> {
+    let (len, bytes) = parse_array_len(&bytes)?;
     if bytes.len() <= len {
         return Err(ParseError::NotEnoughBytes);
     }
@@ -195,7 +191,7 @@ fn parse_bulk_string_inner(bytes: &[u8]) -> ParseResult<(String, &[u8])> {
 
 pub fn parse_bulk_string(bytes: &[u8]) -> ParseResult<(String, &[u8])> {
     let bytes = RESPDataType::BulkString.expect(bytes)?;
-    parse_bulk_string_inner(bytes)
+    parse_bulk_string_contents(bytes)
 }
 
 fn parse_array_len(bytes: &[u8]) -> ParseResult<(usize, &[u8])> {
