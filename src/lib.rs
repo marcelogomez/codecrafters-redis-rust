@@ -1,4 +1,4 @@
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum RESPDataType {
@@ -73,12 +73,11 @@ type ParseResult<T> = Result<T, ParseError>;
 enum RESPValue {
     Integer(i64),
     // TODO: deal with null strings
-    BulkString(String),
+    BulkString(Option<String>),
     SimpleString(String),
     Error(String),
-    Array(Vec<RESPValue>),
+    Array(Option<Vec<RESPValue>>),
 }
-
 
 impl RESPValue {
     fn parse(bytes: &[u8]) -> ParseResult<(Self, &[u8])> {
@@ -102,16 +101,20 @@ impl RESPValue {
             }
             RESPDataType::Array => {
                 let (len, bytes) = parse_array_len(bytes)?;
+                match len {
+                    Some(len) => {
+                        let mut values = vec![];
+                        let mut bytes = bytes;
+                        for _ in 0..len {
+                            let (value, new_bytes) = RESPValue::parse(bytes)?;
+                            values.push(value);
+                            bytes = new_bytes;
+                        }
 
-                let mut values = vec![];
-                let mut bytes = bytes;
-                for _ in 0..len {
-                    let (value, new_bytes) = RESPValue::parse(bytes)?;
-                    values.push(value);
-                    bytes = new_bytes;
+                        Ok((RESPValue::Array(Some(values)), bytes))
+                    }
+                    None => Ok((RESPValue::Array(None), bytes)),
                 }
-
-                Ok((RESPValue::Array(values), bytes))
             }
         }
     }
@@ -179,38 +182,42 @@ fn parse_simple_string_contents(mut bytes: &[u8]) -> ParseResult<(String, &[u8])
     Ok((s, validate_clrf(bytes)?))
 }
 
-fn parse_bulk_string_contents(bytes: &[u8]) -> ParseResult<(String, &[u8])> {
-    let (len, bytes) = parse_array_len(&bytes)?;
-    if bytes.len() <= len {
-        return Err(ParseError::NotEnoughBytes);
+fn parse_bulk_string_contents(bytes: &[u8]) -> ParseResult<(Option<String>, &[u8])> {
+    match parse_array_len(&bytes)? {
+        (Some(len), bytes) => {
+            if bytes.len() <= len {
+                return Err(ParseError::NotEnoughBytes);
+            }
+            let s: String = bytes[..len].iter().map(|&c| c as char).collect();
+            Ok((Some(s), validate_clrf(&bytes[len..])?))
+        }
+        (None, bytes) => Ok((None, bytes)),
     }
-
-    let s: String = bytes[..len].iter().map(|&c| c as char).collect();
-    Ok((s, validate_clrf(&bytes[len..])?))
 }
 
-pub fn parse_bulk_string(bytes: &[u8]) -> ParseResult<(String, &[u8])> {
+pub fn parse_bulk_string(bytes: &[u8]) -> ParseResult<(Option<String>, &[u8])> {
     let bytes = RESPDataType::BulkString.expect(bytes)?;
     parse_bulk_string_contents(bytes)
 }
 
-fn parse_array_len(bytes: &[u8]) -> ParseResult<(usize, &[u8])> {
+fn parse_array_len(bytes: &[u8]) -> ParseResult<(Option<usize>, &[u8])> {
     let (len, bytes) = parse_integer_value(&bytes)?;
-    if len < 0 {
-        Err(ParseError::NegativeValueLength)
-    } else {
-        Ok((len as usize, bytes))
+    match len {
+        0.. => Ok((Some(len as usize), bytes)),
+        -1 => Ok((None, bytes)),
+        _ => Err(ParseError::NegativeValueLength),
     }
 }
 
+// TODO: Delet this
 pub fn parse_bulk_string_array(bytes: &[u8]) -> ParseResult<(Vec<String>, &[u8])> {
     let bytes = RESPDataType::Array.expect(bytes)?;
     let (len, mut bytes) = parse_array_len(bytes)?;
 
-    let mut array = Vec::with_capacity(len as usize);
-    for _ in 0..len {
+    let mut array = Vec::with_capacity(len.unwrap() as usize);
+    for _ in 0..len.unwrap() {
         let (str, new_bytes) = parse_bulk_string(bytes)?;
-        array.push(str);
+        array.push(str.unwrap());
         bytes = new_bytes;
     }
 
@@ -226,14 +233,25 @@ mod test {
         assert_eq!(
             RESPValue::parse("$5\r\nhello\r\nrest".as_bytes()),
             Ok((
-                RESPValue::BulkString("hello".to_string()),
+                RESPValue::BulkString(Some("hello".to_string())),
                 "rest".as_bytes()
             )),
         );
 
         assert_eq!(
             RESPValue::parse("$5\r\nhello\r\n".as_bytes()),
-            Ok((RESPValue::BulkString("hello".to_string()), "".as_bytes())),
+            Ok((
+                RESPValue::BulkString(Some("hello".to_string())),
+                "".as_bytes()
+            )),
+        );
+    }
+
+    #[test]
+    fn test_parse_null_bulk_string() {
+        assert_eq!(
+            RESPValue::parse("$-1\r\nrest".as_bytes()),
+            Ok((RESPValue::BulkString(None), "rest".as_bytes())),
         );
     }
 
@@ -284,10 +302,10 @@ mod test {
         assert_eq!(
             RESPValue::parse("*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes()),
             Ok((
-                RESPValue::Array(vec![
-                    RESPValue::BulkString("hello".to_string()),
-                    RESPValue::BulkString("world".to_string()),
-                ]),
+                RESPValue::Array(Some(vec![
+                    RESPValue::BulkString(Some("hello".to_string())),
+                    RESPValue::BulkString(Some("world".to_string())),
+                ])),
                 "".as_bytes()
             )),
         );
@@ -295,12 +313,20 @@ mod test {
         assert_eq!(
             RESPValue::parse("*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes()),
             Ok((
-                RESPValue::Array(vec![
-                    RESPValue::BulkString("hello".to_string()),
-                    RESPValue::BulkString("world".to_string()),
-                ]),
+                RESPValue::Array(Some(vec![
+                    RESPValue::BulkString(Some("hello".to_string())),
+                    RESPValue::BulkString(Some("world".to_string())),
+                ])),
                 "".as_bytes()
             )),
+        );
+    }
+
+    #[test]
+    fn test_parse_null_array() {
+        assert_eq!(
+            RESPValue::parse("*-1\r\nrest".as_bytes()),
+            Ok((RESPValue::Array(None), "rest".as_bytes())),
         );
     }
 
@@ -309,12 +335,12 @@ mod test {
         assert_eq!(
             RESPValue::parse("*4\r\n$5\r\nhello\r\n:123\r\n-ERROR\r\n+Simple\r\nrest".as_bytes()),
             Ok((
-                RESPValue::Array(vec![
-                    RESPValue::BulkString("hello".to_string()),
+                RESPValue::Array(Some(vec![
+                    RESPValue::BulkString(Some("hello".to_string())),
                     RESPValue::Integer(123),
                     RESPValue::Error("ERROR".to_string()),
                     RESPValue::SimpleString("Simple".to_string()),
-                ]),
+                ])),
                 "rest".as_bytes()
             )),
         );
@@ -328,16 +354,16 @@ mod test {
                 "*2\r\n$5\r\nhello\r\n*2\r\n:123\r\n*2\r\n:456\r\n+Simple\r\nrest".as_bytes()
             ),
             Ok((
-                RESPValue::Array(vec![
-                    RESPValue::BulkString("hello".to_string()),
-                    RESPValue::Array(vec![
+                RESPValue::Array(Some(vec![
+                    RESPValue::BulkString(Some("hello".to_string())),
+                    RESPValue::Array(Some(vec![
                         RESPValue::Integer(123),
-                        RESPValue::Array(vec![
+                        RESPValue::Array(Some(vec![
                             RESPValue::Integer(456),
                             RESPValue::SimpleString("Simple".to_string()),
-                        ])
-                    ]),
-                ]),
+                        ]))
+                    ])),
+                ])),
                 "rest".as_bytes()
             )),
         );
