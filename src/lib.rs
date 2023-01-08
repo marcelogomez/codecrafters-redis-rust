@@ -1,6 +1,7 @@
 use std::{
     borrow::Borrow,
     convert::{TryFrom, TryInto},
+    ops::{Deref, DerefMut},
 };
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -147,6 +148,120 @@ impl TryFrom<RESPValue> for i64 {
             RESPValue::Integer(i) => Ok(i),
             v => Err(RESPValueConversionError::DataTypeMismatch(
                 RESPDataType::Integer,
+                v.data_type(),
+            )),
+        }
+    }
+}
+
+// Introduce this wrapper type so that we can safely convert to string without losing the type information
+#[derive(Debug, PartialEq)]
+struct BulkString(Option<String>);
+
+impl Into<Option<String>> for BulkString {
+    fn into(self) -> Option<String> {
+        self.0
+    }
+}
+
+impl Deref for BulkString {
+    type Target = Option<String>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for BulkString {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl TryFrom<RESPValue> for BulkString {
+    type Error = RESPValueConversionError;
+
+    fn try_from(value: RESPValue) -> Result<Self, Self::Error> {
+        match value {
+            RESPValue::BulkString(s) => Ok(Self(s)),
+            v => Err(RESPValueConversionError::DataTypeMismatch(
+                RESPDataType::BulkString,
+                v.data_type(),
+            )),
+        }
+    }
+}
+
+// Introduce this wrapper type so that we can safely convert to string without losing the type information
+#[derive(Debug, PartialEq)]
+struct SimpleString(String);
+
+impl Into<String> for SimpleString {
+    fn into(self) -> String {
+        self.0
+    }
+}
+
+impl Deref for SimpleString {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for SimpleString {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl TryFrom<RESPValue> for SimpleString {
+    type Error = RESPValueConversionError;
+
+    fn try_from(value: RESPValue) -> Result<Self, Self::Error> {
+        match value {
+            RESPValue::SimpleString(s) => Ok(Self(s)),
+            v => Err(RESPValueConversionError::DataTypeMismatch(
+                RESPDataType::SimpleString,
+                v.data_type(),
+            )),
+        }
+    }
+}
+
+// Introduce this wrapper type so that we can safely convert to string without losing the type information
+#[derive(Debug, PartialEq)]
+struct RESPError(String);
+
+impl Into<String> for RESPError {
+    fn into(self) -> String {
+        self.0
+    }
+}
+
+impl Deref for RESPError {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for RESPError {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl TryFrom<RESPValue> for RESPError {
+    type Error = RESPValueConversionError;
+
+    fn try_from(value: RESPValue) -> Result<Self, Self::Error> {
+        match value {
+            RESPValue::Error(s) => Ok(Self(s)),
+            v => Err(RESPValueConversionError::DataTypeMismatch(
+                RESPDataType::Error,
                 v.data_type(),
             )),
         }
@@ -552,12 +667,104 @@ mod test {
     fn test_try_into_i64_err() {
         assert_eq!(
             i64::try_from(RESPValue::SimpleString("123".to_string())),
-            Err(RESPValueConversionError::DataTypeMismatch(RESPDataType::Integer, RESPDataType::SimpleString)),
+            Err(RESPValueConversionError::DataTypeMismatch(
+                RESPDataType::Integer,
+                RESPDataType::SimpleString
+            )),
         );
 
         assert_eq!(
             i64::try_from(RESPValue::Array(None)),
-            Err(RESPValueConversionError::DataTypeMismatch(RESPDataType::Integer, RESPDataType::Array)),
+            Err(RESPValueConversionError::DataTypeMismatch(
+                RESPDataType::Integer,
+                RESPDataType::Array
+            )),
+        );
+    }
+
+    #[test]
+    fn test_try_into_bulk_string() {
+        assert_eq!(
+            BulkString::try_from(RESPValue::BulkString(Some("string".to_string()))),
+            Ok(BulkString(Some("string".to_string())))
+        );
+
+        assert_eq!(
+            BulkString::try_from(RESPValue::BulkString(None)),
+            Ok(BulkString(None)),
+        );
+    }
+
+    #[test]
+    fn test_try_into_bulk_string_error() {
+        assert_eq!(
+            BulkString::try_from(RESPValue::SimpleString("123".to_string())),
+            Err(RESPValueConversionError::DataTypeMismatch(
+                RESPDataType::BulkString,
+                RESPDataType::SimpleString,
+            )),
+        );
+
+        assert_eq!(
+            BulkString::try_from(RESPValue::Array(None)),
+            Err(RESPValueConversionError::DataTypeMismatch(
+                RESPDataType::BulkString,
+                RESPDataType::Array
+            )),
+        );
+    }
+
+    #[test]
+    fn test_try_into_simple_string() {
+        assert_eq!(
+            SimpleString::try_from(RESPValue::SimpleString("Simple".to_string())),
+            Ok(SimpleString("Simple".to_string())),
+        );
+    }
+
+    #[test]
+    fn test_try_into_simple_string_error() {
+        assert_eq!(
+            SimpleString::try_from(RESPValue::BulkString(None)),
+            Err(RESPValueConversionError::DataTypeMismatch(
+                RESPDataType::SimpleString,
+                RESPDataType::BulkString,
+            )),
+        );
+
+        assert_eq!(
+            SimpleString::try_from(RESPValue::Array(None)),
+            Err(RESPValueConversionError::DataTypeMismatch(
+                RESPDataType::SimpleString,
+                RESPDataType::Array
+            )),
+        );
+    }
+
+    #[test]
+    fn test_try_into_error() {
+        assert_eq!(
+            RESPError::try_from(RESPValue::Error("ERROR".to_string())),
+            Ok(RESPError("ERROR".to_string())),
+        );
+    }
+
+    #[test]
+    fn test_try_into_error_fails() {
+        assert_eq!(
+            RESPError::try_from(RESPValue::BulkString(None)),
+            Err(RESPValueConversionError::DataTypeMismatch(
+                RESPDataType::Error,
+                RESPDataType::BulkString,
+            )),
+        );
+
+        assert_eq!(
+            RESPError::try_from(RESPValue::Array(None)),
+            Err(RESPValueConversionError::DataTypeMismatch(
+                RESPDataType::Error,
+                RESPDataType::Array
+            )),
         );
     }
 }
