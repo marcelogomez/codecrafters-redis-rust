@@ -106,22 +106,42 @@ fn gen_response(command: &String, args: &[BulkString], table: Table) -> Result<R
             Ok(RESPValue::bulk_string(Some(message.to_string())))
         }
         "SET" | "set" => {
-            let mut args = args.into_iter();
+            let mut args = args.into_iter().flat_map(|s| s.as_deref());
             // TODO: Make this easier
             let key = args
                 .next()
-                .and_then(|s| s.as_deref())
                 .ok_or_else(|| "No key specified for set operation".to_string())?;
             let value = args
                 .next()
-                .and_then(|s| s.as_deref())
                 .ok_or_else(|| "No key specified for set operation".to_string())?;
+            let expiry_time_millis = args
+                .find(|&a| a == "px")
+                .and_then(|_| args.next())
+                .map(|t| t.parse())
+                .and_then(Result::ok)
+                .map(Duration::from_millis);
 
             eprintln!("SET {} {}", key, value);
 
             Ok(match table.write() {
                 Ok(mut t) => {
-                    t.insert(key.to_string(), (value.to_string(), None));
+                    match t.get_mut(key) {
+                        Some((old_value, expiry_info)) =>  {
+                            *old_value = value.to_string();
+                            if let Some(new_expiry_time) = expiry_time_millis {
+                                *expiry_info = Some((Instant::now(), new_expiry_time));
+                            }
+                        }
+                        None => {
+                            t.insert(
+                                key.to_string(),
+                                (
+                                    value.to_string(),
+                                    expiry_time_millis.map(|t| (Instant::now(), t)),
+                                ),
+                            );
+                        }
+                    }
                     RESPValue::simple_string("OK".to_string())
                 }
                 Err(e) => {
@@ -143,9 +163,16 @@ fn gen_response(command: &String, args: &[BulkString], table: Table) -> Result<R
 
             match table.read() {
                 Ok(t) => match t.get(key) {
-                    Some((value, _expiry_info)) => {
+                    Some((value, None)) => Ok(RESPValue::bulk_string(Some(value.to_string()))),
+                    // Key still hasn't expired
+                    Some((value, Some((t_insert, duration))))
+                        if t_insert.elapsed() <= *duration =>
+                    {
                         Ok(RESPValue::bulk_string(Some(value.to_string())))
                     }
+                    // Key has expired
+                    // TODO: actually delete key
+                    Some((_, Some(_))) => Ok(RESPValue::bulk_string(None)),
                     None => Ok(RESPValue::bulk_string(None)),
                 },
                 // TODO: Read up on error handling
