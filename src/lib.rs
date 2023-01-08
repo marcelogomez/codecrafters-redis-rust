@@ -20,15 +20,6 @@ impl RESPDataType {
 
         Ok((Self::try_from(bytes[0])?, &bytes[1..]))
     }
-
-    fn expect(self, bytes: &[u8]) -> ParseResult<&[u8]> {
-        let (actual, bytes) = Self::from_bytes(bytes)?;
-        if actual == self {
-            Ok(bytes)
-        } else {
-            Err(ParseError::UnexpectedDataType(self, actual))
-        }
-    }
 }
 
 impl TryFrom<u8> for RESPDataType {
@@ -363,11 +354,6 @@ fn parse_bulk_string_contents(bytes: &[u8]) -> ParseResult<(Option<String>, &[u8
     }
 }
 
-pub fn parse_bulk_string(bytes: &[u8]) -> ParseResult<(Option<String>, &[u8])> {
-    let bytes = RESPDataType::BulkString.expect(bytes)?;
-    parse_bulk_string_contents(bytes)
-}
-
 fn parse_array_len(bytes: &[u8]) -> ParseResult<(Option<usize>, &[u8])> {
     let (len, bytes) = parse_integer_value(&bytes)?;
     match len {
@@ -375,21 +361,6 @@ fn parse_array_len(bytes: &[u8]) -> ParseResult<(Option<usize>, &[u8])> {
         -1 => Ok((None, bytes)),
         _ => Err(ParseError::NegativeValueLength),
     }
-}
-
-// TODO: Delet this
-pub fn parse_bulk_string_array(bytes: &[u8]) -> ParseResult<(Vec<String>, &[u8])> {
-    let bytes = RESPDataType::Array.expect(bytes)?;
-    let (len, mut bytes) = parse_array_len(bytes)?;
-
-    let mut array = Vec::with_capacity(len.unwrap() as usize);
-    for _ in 0..len.unwrap() {
-        let (str, new_bytes) = parse_bulk_string(bytes)?;
-        array.push(str.unwrap());
-        bytes = new_bytes;
-    }
-
-    Ok((array, bytes))
 }
 
 #[cfg(test)]
