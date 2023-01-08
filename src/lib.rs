@@ -9,6 +9,21 @@ pub enum RESPDataType {
     Array,
 }
 
+impl RESPDataType {
+    fn expect(self, bytes: &[u8]) -> ParseResult<&[u8]> {
+        if bytes.is_empty() {
+            return Err(ParseError::NotEnoughBytes);
+        }
+
+        let actual = Self::try_from(bytes[0])?;
+        if actual == self {
+            Ok(&bytes[1..])
+        } else {
+            Err(ParseError::UnexpectedDataType(self, actual))
+        }
+    }
+}
+
 impl TryFrom<u8> for RESPDataType {
     type Error = ParseError;
 
@@ -107,19 +122,8 @@ fn parse_bulk_string_inner(bytes: &[u8], len: usize) -> ParseResult<(String, &[u
 }
 
 pub fn parse_bulk_string(bytes: &[u8]) -> ParseResult<(String, &[u8])> {
-    if bytes.is_empty() {
-        return Err(ParseError::NotEnoughBytes);
-    }
-
-    let data_type = RESPDataType::try_from(bytes[0])?;
-    if data_type != RESPDataType::BulkString {
-        return Err(ParseError::UnexpectedDataType(
-            RESPDataType::Array,
-            data_type,
-        ));
-    }
-
-    let (len, bytes) = parse_num_inner(&bytes[1..])?;
+    let bytes = RESPDataType::BulkString.expect(bytes)?;
+    let (len, bytes) = parse_num_inner(&bytes)?;
     if len < 0 {
         Err(ParseError::NegativeValueLength)
     } else {
@@ -128,19 +132,8 @@ pub fn parse_bulk_string(bytes: &[u8]) -> ParseResult<(String, &[u8])> {
 }
 
 fn parse_array_len(bytes: &[u8]) -> ParseResult<(usize, &[u8])> {
-    if bytes.is_empty() {
-        return Err(ParseError::NotEnoughBytes);
-    }
-
-    let data_type = RESPDataType::try_from(bytes[0])?;
-    if data_type != RESPDataType::Array {
-        return Err(ParseError::UnexpectedDataType(
-            RESPDataType::Array,
-            data_type,
-        ));
-    }
-
-    let (len, bytes) = parse_num_inner(&bytes[1..])?;
+    let bytes = RESPDataType::Array.expect(bytes)?;
+    let (len, bytes) = parse_num_inner(&bytes)?;
     if len < 0 {
         Err(ParseError::NegativeValueLength)
     } else {
