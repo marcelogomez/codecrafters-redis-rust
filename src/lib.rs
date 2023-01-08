@@ -76,6 +76,7 @@ enum RESPValue {
     BulkString(String),
     SimpleString(String),
     Error(String),
+    Array(Vec<RESPValue>),
 }
 
 impl RESPValue {
@@ -98,7 +99,19 @@ impl RESPValue {
                 let (s, bytes) = parse_simple_string_contents(bytes)?;
                 Ok((Self::Error(s), bytes))
             }
-            t => panic!("Parsing for {:?} not yet implemented", t),
+            RESPDataType::Array => {
+                let (len, bytes) = parse_array_len(bytes)?;
+
+                let mut values = vec![];
+                let mut bytes = bytes;
+                for _ in 0..len {
+                    let (value, new_bytes) = RESPValue::parse(bytes)?;
+                    values.push(value);
+                    bytes = new_bytes;
+                }
+
+                Ok((RESPValue::Array(values), bytes))
+            }
         }
     }
 }
@@ -186,7 +199,6 @@ pub fn parse_bulk_string(bytes: &[u8]) -> ParseResult<(String, &[u8])> {
 }
 
 fn parse_array_len(bytes: &[u8]) -> ParseResult<(usize, &[u8])> {
-    let bytes = RESPDataType::Array.expect(bytes)?;
     let (len, bytes) = parse_integer_value(&bytes)?;
     if len < 0 {
         Err(ParseError::NegativeValueLength)
@@ -196,6 +208,7 @@ fn parse_array_len(bytes: &[u8]) -> ParseResult<(usize, &[u8])> {
 }
 
 pub fn parse_bulk_string_array(bytes: &[u8]) -> ParseResult<(Vec<String>, &[u8])> {
+    let bytes = RESPDataType::Array.expect(bytes)?;
     let (len, mut bytes) = parse_array_len(bytes)?;
 
     let mut array = Vec::with_capacity(len as usize);
@@ -271,44 +284,89 @@ mod test {
     }
 
     #[test]
-    fn test_parse_bulk_string_array() {
+    fn test_parse_array() {
         assert_eq!(
-            parse_bulk_string_array("*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes()),
+            RESPValue::parse("*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes()),
             Ok((
-                vec!["hello".to_string(), "world".to_string()],
+                RESPValue::Array(vec![
+                    RESPValue::BulkString("hello".to_string()),
+                    RESPValue::BulkString("world".to_string()),
+                ]),
                 "".as_bytes()
             )),
         );
 
         assert_eq!(
-            parse_bulk_string_array("*2\r\n$5\r\nhello\r\n$5\r\nworld\r\nrest".as_bytes()),
+            RESPValue::parse("*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes()),
             Ok((
-                vec!["hello".to_string(), "world".to_string()],
+                RESPValue::Array(vec![
+                    RESPValue::BulkString("hello".to_string()),
+                    RESPValue::BulkString("world".to_string()),
+                ]),
+                "".as_bytes()
+            )),
+        );
+    }
+
+    #[test]
+    fn test_parse_mixed_array() {
+        assert_eq!(
+            RESPValue::parse("*4\r\n$5\r\nhello\r\n:123\r\n-ERROR\r\n+Simple\r\nrest".as_bytes()),
+            Ok((
+                RESPValue::Array(vec![
+                    RESPValue::BulkString("hello".to_string()),
+                    RESPValue::Integer(123),
+                    RESPValue::Error("ERROR".to_string()),
+                    RESPValue::SimpleString("Simple".to_string()),
+                ]),
                 "rest".as_bytes()
             )),
         );
     }
 
     #[test]
-    fn test_parse_bulk_string_array_negative_len() {
+    fn test_parse_nested_array() {
         assert_eq!(
-            parse_bulk_string_array("*-2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes()),
+            // [bulk(hello), [123, [456, simple(Simple)]]]
+            RESPValue::parse(
+                "*2\r\n$5\r\nhello\r\n*2\r\n:123\r\n*2\r\n:456\r\n+Simple\r\nrest".as_bytes()
+            ),
+            Ok((
+                RESPValue::Array(vec![
+                    RESPValue::BulkString("hello".to_string()),
+                    RESPValue::Array(vec![
+                        RESPValue::Integer(123),
+                        RESPValue::Array(vec![
+                            RESPValue::Integer(456),
+                            RESPValue::SimpleString("Simple".to_string()),
+                        ])
+                    ]),
+                ]),
+                "rest".as_bytes()
+            )),
+        );
+    }
+
+    #[test]
+    fn test_parse_array_negative_len() {
+        assert_eq!(
+            RESPValue::parse("*-2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".as_bytes()),
             Err(ParseError::NegativeValueLength),
         );
     }
 
     #[test]
-    fn test_parse_bulk_string_array_too_few_elements() {
+    fn test_parse_array_too_few_elements() {
         assert_eq!(
-            parse_bulk_string_array("*2\r\n$5\r\nhello\r\n".as_bytes()),
+            RESPValue::parse("*2\r\n$5\r\nhello\r\n".as_bytes()),
             Err(ParseError::NotEnoughBytes),
         );
     }
 
     #[test]
-    fn test_parse_bulk_string_array_malformed_element() {
+    fn test_parse_array_malformed_element() {
         assert_eq!(
-            parse_bulk_string_array("*2\r\n$5\r\nhelloooo\r\n$5\r\nworld\r\n".as_bytes()),
+            RESPValue::parse("*2\r\n$5\r\nhelloooo\r\n$5\r\nworld\r\n".as_bytes()),
             Err(ParseError::MissingCLRF),
         );
     }
