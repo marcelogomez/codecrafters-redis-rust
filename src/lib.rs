@@ -72,15 +72,20 @@ type ParseResult<T> = Result<T, ParseError>;
 #[derive(Debug, PartialEq)]
 enum RESPValue {
     Integer(i64),
+    BulkString(String),
 }
 
 impl RESPValue {
     fn parse(bytes: &[u8]) -> ParseResult<(Self, &[u8])> {
         let (data_type, bytes) = RESPDataType::from_bytes(bytes)?;
         match data_type {
-            RESPDataType::Integer =>  {
-                let (i, bytes) = parse_num_inner(bytes)?;
+            RESPDataType::Integer => {
+                let (i, bytes) = parse_integer_value(bytes)?;
                 Ok((Self::Integer(i), bytes))
+            }
+            RESPDataType::BulkString => {
+                let (s, bytes) = parse_bulk_string_inner(bytes)?;
+                Ok((Self::BulkString(s), bytes))
             }
             t => panic!("Parsing for {:?} not yet implemented", t),
         }
@@ -110,7 +115,7 @@ fn validate_clrf(bytes: &[u8]) -> ParseResult<&[u8]> {
 }
 
 // Parses a clrf terminated number, returns the remaining bytes
-fn parse_num_inner(mut bytes: &[u8]) -> ParseResult<(i64, &[u8])> {
+fn parse_integer_value(mut bytes: &[u8]) -> ParseResult<(i64, &[u8])> {
     let mut num: i64 = 0;
 
     // Deal with negative numbers
@@ -135,7 +140,13 @@ fn parse_num_inner(mut bytes: &[u8]) -> ParseResult<(i64, &[u8])> {
     Ok((num, validate_clrf(bytes)?))
 }
 
-fn parse_bulk_string_inner(bytes: &[u8], len: usize) -> ParseResult<(String, &[u8])> {
+fn parse_bulk_string_inner(bytes: &[u8]) -> ParseResult<(String, &[u8])> {
+    let (len, bytes) = parse_integer_value(&bytes)?;
+    if len < 0 {
+        return Err(ParseError::NegativeValueLength);
+    }
+    let len = len as usize;
+
     if bytes.len() <= len {
         return Err(ParseError::NotEnoughBytes);
     }
@@ -145,17 +156,12 @@ fn parse_bulk_string_inner(bytes: &[u8], len: usize) -> ParseResult<(String, &[u
 
 pub fn parse_bulk_string(bytes: &[u8]) -> ParseResult<(String, &[u8])> {
     let bytes = RESPDataType::BulkString.expect(bytes)?;
-    let (len, bytes) = parse_num_inner(&bytes)?;
-    if len < 0 {
-        Err(ParseError::NegativeValueLength)
-    } else {
-        parse_bulk_string_inner(bytes, len as usize)
-    }
+    parse_bulk_string_inner(bytes)
 }
 
 fn parse_array_len(bytes: &[u8]) -> ParseResult<(usize, &[u8])> {
     let bytes = RESPDataType::Array.expect(bytes)?;
-    let (len, bytes) = parse_num_inner(&bytes)?;
+    let (len, bytes) = parse_integer_value(&bytes)?;
     if len < 0 {
         Err(ParseError::NegativeValueLength)
     } else {
@@ -183,20 +189,23 @@ mod test {
     #[test]
     fn test_parse_bulk_string() {
         assert_eq!(
-            parse_bulk_string("$5\r\nhello\r\nrest".as_bytes()),
-            Ok(("hello".to_string(), "rest".as_bytes())),
+            RESPValue::parse("$5\r\nhello\r\nrest".as_bytes()),
+            Ok((
+                RESPValue::BulkString("hello".to_string()),
+                "rest".as_bytes()
+            )),
         );
 
         assert_eq!(
-            parse_bulk_string("$5\r\nhello\r\n".as_bytes()),
-            Ok(("hello".to_string(), "".as_bytes())),
+            RESPValue::parse("$5\r\nhello\r\n".as_bytes()),
+            Ok((RESPValue::BulkString("hello".to_string()), "".as_bytes())),
         );
     }
 
     #[test]
     fn test_parse_bulk_string_negative_len() {
         assert_eq!(
-            parse_bulk_string("$-5\r\nhello\r\nrest".as_bytes()),
+            RESPValue::parse("$-5\r\nhello\r\nrest".as_bytes()),
             Err(ParseError::NegativeValueLength),
         );
     }
@@ -204,7 +213,7 @@ mod test {
     #[test]
     fn test_parse_bulk_string_len_missing_clrf() {
         assert_eq!(
-            parse_bulk_string("$5hello\r\nrest".as_bytes()),
+            RESPValue::parse("$5hello\r\nrest".as_bytes()),
             Err(ParseError::UnexpectedNonNumericCharacter('h'))
         );
     }
@@ -212,7 +221,7 @@ mod test {
     #[test]
     fn test_parse_bulk_string_not_enough_bytes() {
         assert_eq!(
-            parse_bulk_string("$5\r\nhell".as_bytes()),
+            RESPValue::parse("$5\r\nhell".as_bytes()),
             Err(ParseError::NotEnoughBytes),
         );
     }
@@ -220,17 +229,17 @@ mod test {
     #[test]
     fn test_parse_bulk_string_missing_clrf_termination() {
         assert_eq!(
-            parse_bulk_string("$5\r\nhello".as_bytes()),
+            RESPValue::parse("$5\r\nhello".as_bytes()),
             Err(ParseError::NotEnoughBytes),
         );
 
         assert_eq!(
-            parse_bulk_string("$5\r\nhelloooo".as_bytes()),
+            RESPValue::parse("$5\r\nhelloooo".as_bytes()),
             Err(ParseError::MissingCLRF),
         );
 
         assert_eq!(
-            parse_bulk_string("$5\r\nhelloooo\r\n".as_bytes()),
+            RESPValue::parse("$5\r\nhelloooo\r\n".as_bytes()),
             Err(ParseError::MissingCLRF),
         );
     }
