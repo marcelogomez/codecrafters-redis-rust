@@ -1,4 +1,6 @@
-use redis_starter_rust::parse_bulk_string_array;
+use redis_starter_rust::BulkString;
+use redis_starter_rust::RESPValue;
+use std::convert::TryInto;
 #[allow(unused_imports)]
 use std::env;
 #[allow(unused_imports)]
@@ -64,23 +66,26 @@ async fn handle_client(mut socket: TcpStream, addr: SocketAddr) {
 }
 
 fn handle_command(command_buf: &[u8]) -> Result<String, String> {
-    // TODO: improve error types here + add display format for parse error
-    let (command, _) = parse_bulk_string_array(&command_buf).map_err(|e| format!("{:?}", e))?;
+    let (resp_value, _) = RESPValue::parse(command_buf).map_err(|e| format!("{:?}", e))?;
+    // TODO: Make this easier
+    let command: Option<Vec<BulkString>> = resp_value.try_into().unwrap();
+    let command = command.unwrap_or_default();
 
     if command.is_empty() {
         return Err("Empty command".into());
     }
 
-    Ok(gen_response(command[0].as_str(), &command[1..])?)
+    Ok(gen_response(command[0].as_ref().unwrap(), &command[1..])?)
 }
 
-fn gen_response(command: &str, args: &[String]) -> Result<String, String> {
-    match command {
+fn gen_response(command: &String, args: &[BulkString]) -> Result<String, String> {
+    match command.as_str() {
         "ECHO" | "echo" => {
             if args.is_empty() {
                 return Err("No message to ECHO".to_string());
             }
-            let message = &args[0];
+            // TODO: Make this easier
+            let message = args[0].as_ref().map(|s| s.as_str()).unwrap_or_default();
             Ok(format!("${}\r\n{}\r\n", message.len(), message))
         }
         "PING" | "ping" => Ok("+PONG\r\n".to_string()),

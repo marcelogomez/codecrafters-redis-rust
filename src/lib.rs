@@ -73,7 +73,7 @@ pub enum ParseError {
 type ParseResult<T> = Result<T, ParseError>;
 
 #[derive(Debug, PartialEq)]
-enum RESPValue {
+pub enum RESPValue {
     Integer(i64),
     // TODO: deal with null strings
     BulkString(Option<String>),
@@ -83,7 +83,7 @@ enum RESPValue {
 }
 
 impl RESPValue {
-    fn parse<'a>(bytes: &'a (impl AsRef<[u8]> + ?Sized)) -> ParseResult<(Self, &'a [u8])> {
+    pub fn parse<'a>(bytes: &'a (impl AsRef<[u8]> + ?Sized)) -> ParseResult<(Self, &'a [u8])> {
         let bytes = bytes.as_ref();
         let (data_type, bytes) = RESPDataType::from_bytes(bytes)?;
         match data_type {
@@ -134,7 +134,7 @@ impl RESPValue {
 }
 
 #[derive(Debug, PartialEq)]
-enum RESPValueConversionError {
+pub enum RESPValueConversionError {
     // (expected, actual)
     DataTypeMismatch(RESPDataType, RESPDataType),
 }
@@ -155,7 +155,7 @@ impl TryFrom<RESPValue> for i64 {
 
 // Introduce this wrapper type so that we can safely convert to string without losing the type information
 #[derive(Debug, PartialEq)]
-struct BulkString(Option<String>);
+pub struct BulkString(Option<String>);
 
 impl Into<Option<String>> for BulkString {
     fn into(self) -> Option<String> {
