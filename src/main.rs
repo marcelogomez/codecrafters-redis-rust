@@ -111,7 +111,7 @@ fn gen_response(command: &String, args: &[BulkString], table: Table) -> Result<S
                 .next()
                 .and_then(|s| s.as_deref())
                 .ok_or_else(|| "No key specified for set operation".to_string())?;
-            
+
             match table.write() {
                 Ok(mut t) => {
                     t.insert(key.to_string(), value.to_string());
@@ -122,6 +122,23 @@ fn gen_response(command: &String, args: &[BulkString], table: Table) -> Result<S
                     // TODO: Make error handling simpler
                     Ok(format!("$-1\r\n"))
                 }
+            }
+        }
+        "GET" | "get" => {
+            let mut args = args.into_iter();
+            // TODO: Make this easier
+            let key = args
+                .next()
+                .and_then(|s| s.as_deref())
+                .ok_or_else(|| "No key specified for get operation".to_string())?;
+
+            match table.read() {
+                Ok(t) => match t.get(key) {
+                    Some(value) => Ok(format!("${}\r\n{}", value.len(), value)),
+                    None => Ok(format!("$-1\r\n")),
+                },
+                // TODO: Read up on error handling
+                Err(e) => Err(format!("Failed to acquire lock for table {}", e)),
             }
         }
         "PING" | "ping" => Ok("+PONG\r\n".to_string()),
