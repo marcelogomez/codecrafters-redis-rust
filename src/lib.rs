@@ -105,20 +105,19 @@ impl RESPValue {
             }
             RESPDataType::Array => {
                 let (len, bytes) = parse_array_len(bytes)?;
-                match len {
-                    Some(len) => {
-                        let mut values = vec![];
-                        let mut bytes = bytes;
-                        for _ in 0..len {
-                            let (value, new_bytes) = RESPValue::parse(bytes)?;
-                            values.push(value);
-                            bytes = new_bytes;
-                        }
+                let (values, bytes) = len
+                    .map(|len| {
+                        (0..len)
+                            .try_fold((vec![], bytes), |(mut vec, bytes), _| {
+                                let (value, bytes) = RESPValue::parse(bytes)?;
+                                vec.push(value);
+                                Ok((vec, bytes))
+                            })
+                            .map(|(values, bytes)| (Some(values), bytes))
+                    })
+                    .unwrap_or_else(|| Ok((None, bytes)))?;
 
-                        Ok((RESPValue::Array(Some(values)), bytes))
-                    }
-                    None => Ok((RESPValue::Array(None), bytes)),
-                }
+                Ok((Self::Array(values), bytes))
             }
         }
     }
