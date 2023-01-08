@@ -75,6 +75,7 @@ async fn handle_client(mut socket: TcpStream, addr: SocketAddr, table: Table) {
 
 fn handle_command(command_buf: &[u8], table: Table) -> Result<String, String> {
     let (resp_value, _) = RESPValue::parse(command_buf).map_err(|e| format!("{:?}", e))?;
+    eprintln!("Received command: {:?}", resp_value);
     // TODO: Make this easier
     let command: Option<Vec<BulkString>> = resp_value.try_into().unwrap();
     let command = command.unwrap_or_default();
@@ -91,6 +92,7 @@ fn handle_command(command_buf: &[u8], table: Table) -> Result<String, String> {
 }
 
 fn gen_response(command: &String, args: &[BulkString], table: Table) -> Result<String, String> {
+    eprintln!("Handling command: {}", command);
     match command.as_str() {
         "ECHO" | "echo" => {
             if args.is_empty() {
@@ -112,17 +114,21 @@ fn gen_response(command: &String, args: &[BulkString], table: Table) -> Result<S
                 .and_then(|s| s.as_deref())
                 .ok_or_else(|| "No key specified for set operation".to_string())?;
 
-            match table.write() {
+            eprintln!("SET {} {}", key, value);
+
+            let resp = match table.write() {
                 Ok(mut t) => {
                     t.insert(key.to_string(), value.to_string());
-                    Ok(format!("+OK\r\n"))
+                    format!("+OK\r\n")
                 }
                 Err(e) => {
                     eprintln!("Failed to acquire lock for table {}", e);
                     // TODO: Make error handling simpler
-                    Ok(format!("$-1\r\n"))
+                    format!("$-1\r\n")
                 }
-            }
+            };
+            eprintln!("RESPONSE: {}", resp);
+            Ok(resp)
         }
         "GET" | "get" => {
             let mut args = args.into_iter();
@@ -132,14 +138,18 @@ fn gen_response(command: &String, args: &[BulkString], table: Table) -> Result<S
                 .and_then(|s| s.as_deref())
                 .ok_or_else(|| "No key specified for get operation".to_string())?;
 
-            match table.read() {
+            eprintln!("GET {}", key);
+
+            let resp = match table.read() {
                 Ok(t) => match t.get(key) {
-                    Some(value) => Ok(format!("${}\r\n{}", value.len(), value)),
+                    Some(value) => Ok(format!("${}\r\n{}\r\n", value.len(), value)),
                     None => Ok(format!("$-1\r\n")),
                 },
                 // TODO: Read up on error handling
                 Err(e) => Err(format!("Failed to acquire lock for table {}", e)),
-            }
+            }?;
+            eprintln!("RESPONSE: {}", resp);
+            Ok(resp)
         }
         "PING" | "ping" => Ok("+PONG\r\n".to_string()),
         c => Err(format!("Unknown command {}", c)),
