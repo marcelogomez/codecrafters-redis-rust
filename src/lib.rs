@@ -63,7 +63,7 @@ pub enum ParseError {
 
 type ParseResult<T> = Result<T, ParseError>;
 
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub enum RESPValue {
     Integer(i64),
     // TODO: deal with null strings
@@ -71,6 +71,21 @@ pub enum RESPValue {
     SimpleString(String),
     Error(String),
     Array(Option<Vec<RESPValue>>),
+}
+
+const ESCAPED_CLRF: &str = "\\r\\n";
+const CLRF: &str = "\r\n";
+
+impl std::fmt::Debug for RESPValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.format(f, ESCAPED_CLRF)
+    }
+}
+
+impl std::fmt::Display for RESPValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.format(f, CLRF)
+    }
 }
 
 impl RESPValue {
@@ -121,6 +136,37 @@ impl RESPValue {
             RESPValue::Error(_) => RESPDataType::Error,
             RESPValue::Array(_) => RESPDataType::Array,
         }
+    }
+
+    fn format(&self, f: &mut std::fmt::Formatter<'_>, clrf: &str) -> std::fmt::Result {
+        match self {
+            Self::Integer(i) => {
+                write!(f, ":{}", i)?;
+            }
+            Self::BulkString(Some(s)) => {
+                write!(f, "${}{}{}", s.len(), clrf, s)?;
+            }
+            Self::BulkString(None) => {
+                write!(f, "$-1")?;
+            }
+            Self::Error(s) => {
+                write!(f, "+{}", s)?;
+            }
+            Self::SimpleString(s) => {
+                write!(f, "-{}", s)?;
+            }
+            Self::Array(Some(values)) => {
+                write!(f, "*{}{}", values.len(), clrf)?;
+                for v in values {
+                    write!(f, "{}", v)?;
+                }
+            }
+            Self::Array(None) => {
+                write!(f, "*-1")?;
+            }
+        }
+
+        write!(f, "{}", clrf)
     }
 }
 
