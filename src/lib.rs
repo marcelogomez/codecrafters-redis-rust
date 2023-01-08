@@ -10,14 +10,18 @@ pub enum RESPDataType {
 }
 
 impl RESPDataType {
-    fn expect(self, bytes: &[u8]) -> ParseResult<&[u8]> {
+    fn from_bytes(bytes: &[u8]) -> ParseResult<(Self, &[u8])> {
         if bytes.is_empty() {
             return Err(ParseError::NotEnoughBytes);
         }
 
-        let actual = Self::try_from(bytes[0])?;
+        Ok((Self::try_from(bytes[0])?, &bytes[1..]))
+    }
+
+    fn expect(self, bytes: &[u8]) -> ParseResult<&[u8]> {
+        let (actual, bytes) = Self::from_bytes(bytes)?;
         if actual == self {
-            Ok(&bytes[1..])
+            Ok(bytes)
         } else {
             Err(ParseError::UnexpectedDataType(self, actual))
         }
@@ -64,6 +68,24 @@ pub enum ParseError {
 }
 
 type ParseResult<T> = Result<T, ParseError>;
+
+#[derive(Debug, PartialEq)]
+enum RESPValue {
+    Integer(i64),
+}
+
+impl RESPValue {
+    fn parse(bytes: &[u8]) -> ParseResult<(Self, &[u8])> {
+        let (data_type, bytes) = RESPDataType::from_bytes(bytes)?;
+        match data_type {
+            RESPDataType::Integer =>  {
+                let (i, bytes) = parse_num_inner(bytes)?;
+                Ok((Self::Integer(i), bytes))
+            }
+            t => panic!("Parsing for {:?} not yet implemented", t),
+        }
+    }
+}
 
 /// Takes in a stream of bytes that represent a RESP message
 /// and turns it into a printable debug string that escapes all the special characters
@@ -289,5 +311,31 @@ mod test {
         do_test_data_type_to_byte(RESPDataType::Integer, b':');
         do_test_data_type_to_byte(RESPDataType::BulkString, b'$');
         do_test_data_type_to_byte(RESPDataType::Array, b'*');
+    }
+
+    #[test]
+    fn test_parse_integer() {
+        assert_eq!(
+            RESPValue::parse(":123\r\n".as_bytes()),
+            Ok((RESPValue::Integer(123), "".as_bytes())),
+        );
+
+        assert_eq!(
+            RESPValue::parse(":-123\r\n".as_bytes()),
+            Ok((RESPValue::Integer(-123), "".as_bytes())),
+        );
+    }
+
+    #[test]
+    fn test_parse_integer_error() {
+        assert_eq!(
+            RESPValue::parse(":123".as_bytes()),
+            Err(ParseError::MissingCLRF),
+        );
+
+        assert_eq!(
+            RESPValue::parse(":12l23\r\n".as_bytes()),
+            Err(ParseError::UnexpectedNonNumericCharacter('l')),
+        );
     }
 }
