@@ -75,6 +75,7 @@ enum RESPValue {
     // TODO: deal with null strings
     BulkString(String),
     SimpleString(String),
+    Error(String),
 }
 
 impl RESPValue {
@@ -92,6 +93,10 @@ impl RESPValue {
             RESPDataType::SimpleString => {
                 let (s, bytes) = parse_simple_string_contents(bytes)?;
                 Ok((Self::SimpleString(s), bytes))
+            }
+            RESPDataType::Error => {
+                let (s, bytes) = parse_simple_string_contents(bytes)?;
+                Ok((Self::Error(s), bytes))
             }
             t => panic!("Parsing for {:?} not yet implemented", t),
         }
@@ -394,6 +399,35 @@ mod test {
 
         assert_eq!(
             RESPValue::parse("+OKOKOK\r".as_bytes()),
+            Err(ParseError::MissingCLRF),
+        );
+    }
+
+    #[test]
+    fn test_parse_error() {
+        assert_eq!(
+            RESPValue::parse("-ERROR\r\n".as_bytes()),
+            Ok((RESPValue::Error("ERROR".to_string()), "".as_bytes())),
+        );
+    }
+
+    #[test]
+    fn test_parse_error_with_intermediate_carriage_return() {
+        assert_eq!(
+            RESPValue::parse("-ERROR\rBAD\r\n".as_bytes()),
+            Ok((RESPValue::Error("ERROR\rBAD".to_string()), "".as_bytes())),
+        );
+    }
+
+    #[test]
+    fn test_parse_error_error() {
+        assert_eq!(
+            RESPValue::parse("-ERROR".as_bytes()),
+            Err(ParseError::MissingCLRF),
+        );
+
+        assert_eq!(
+            RESPValue::parse("+ERROR\r".as_bytes()),
             Err(ParseError::MissingCLRF),
         );
     }
