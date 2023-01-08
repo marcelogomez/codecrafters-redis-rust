@@ -254,6 +254,12 @@ mod test {
         assert_eq!(RESPDataType::try_from(b'*'), Ok(RESPDataType::Array));
     }
 
+    #[test]
+    fn test_parse_data_type_error() {
+        assert_eq!(RESPDataType::try_from(b'x'), Err(UnknownRESPDataType('x')));
+        assert_eq!(RESPDataType::try_from(b'a'), Err(UnknownRESPDataType('a')));
+    }
+
     fn do_test_data_type_to_byte(t: RESPDataType, expected: u8) {
         let actual: u8 = t.into();
         assert_eq!(actual, expected);
