@@ -1,3 +1,44 @@
+use std::convert::TryFrom;
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum RESPDataType {
+    SimpleString,
+    Error,
+    Integer,
+    BulkString,
+    Array,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct UnknownRESPDataType(pub char);
+
+impl TryFrom<u8> for RESPDataType {
+    type Error = UnknownRESPDataType;
+
+    fn try_from(value: u8) -> Result<Self, UnknownRESPDataType> {
+        match value {
+            b'+' => Ok(Self::SimpleString),
+            b'-' => Ok(Self::Error),
+            b':' => Ok(Self::Integer),
+            b'$' => Ok(Self::BulkString),
+            b'*' => Ok(Self::Array),
+            c => Err(UnknownRESPDataType(c as char)),
+        }
+    }
+}
+
+impl Into<u8> for RESPDataType {
+    fn into(self) -> u8 {
+        match self {
+            Self::SimpleString => b'+',
+            Self::Error => b'-',
+            Self::Integer => b':',
+            Self::BulkString => b'$',
+            Self::Array => b'*',
+        }
+    }
+}
+
 /// Takes in a stream of bytes that represent a RESP message
 /// and turns it into a printable debug string that escapes all the special characters
 pub fn resp_to_debug_str(bytes: impl IntoIterator<Item = u8>) -> String {
@@ -171,7 +212,7 @@ mod test {
             )),
         );
 
-         assert_eq!(
+        assert_eq!(
             parse_bulk_string_array("*2\r\n$5\r\nhello\r\n$5\r\nworld\r\nrest".as_bytes()),
             Ok((
                 vec!["hello".to_string(), "world".to_string()],
@@ -202,5 +243,28 @@ mod test {
             parse_bulk_string_array("*2\r\n$5\r\nhelloooo\r\n$5\r\nworld\r\n".as_bytes()),
             Err("Expected CLRF"),
         );
+    }
+
+    #[test]
+    fn test_parse_data_type() {
+        assert_eq!(RESPDataType::try_from(b'+'), Ok(RESPDataType::SimpleString));
+        assert_eq!(RESPDataType::try_from(b'-'), Ok(RESPDataType::Error));
+        assert_eq!(RESPDataType::try_from(b':'), Ok(RESPDataType::Integer));
+        assert_eq!(RESPDataType::try_from(b'$'), Ok(RESPDataType::BulkString));
+        assert_eq!(RESPDataType::try_from(b'*'), Ok(RESPDataType::Array));
+    }
+
+    fn do_test_data_type_to_byte(t: RESPDataType, expected: u8) {
+        let actual: u8 = t.into();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_data_type_to_byte() {
+        do_test_data_type_to_byte(RESPDataType::SimpleString, b'+');
+        do_test_data_type_to_byte(RESPDataType::Error, b'-');
+        do_test_data_type_to_byte(RESPDataType::Integer, b':');
+        do_test_data_type_to_byte(RESPDataType::BulkString, b'$');
+        do_test_data_type_to_byte(RESPDataType::Array, b'*');
     }
 }
