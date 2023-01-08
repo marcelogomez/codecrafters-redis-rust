@@ -1,6 +1,5 @@
 use std::{
-    borrow::Borrow,
-    convert::{TryFrom, TryInto},
+    convert::TryFrom,
     ops::{Deref, DerefMut},
 };
 
@@ -268,6 +267,27 @@ impl TryFrom<RESPValue> for RESPError {
     }
 }
 
+impl<T> TryFrom<RESPValue> for Option<Vec<T>>
+where
+    T: TryFrom<RESPValue, Error = RESPValueConversionError>,
+{
+    type Error = RESPValueConversionError;
+
+    fn try_from(value: RESPValue) -> Result<Self, Self::Error> {
+        match value {
+            RESPValue::Array(Some(values)) => {
+                let converted: Result<_, _> = values.into_iter().map(T::try_from).collect();
+                Ok(Some(converted?))
+            }
+            RESPValue::Array(None) => Ok(None),
+            v => Err(RESPValueConversionError::DataTypeMismatch(
+                RESPDataType::Array,
+                v.data_type(),
+            )),
+        }
+    }
+}
+
 /// Takes in a stream of bytes that represent a RESP message
 /// and turns it into a printable debug string that escapes all the special characters
 pub fn resp_to_debug_str(bytes: impl IntoIterator<Item = u8>) -> String {
@@ -374,6 +394,8 @@ pub fn parse_bulk_string_array(bytes: &[u8]) -> ParseResult<(Vec<String>, &[u8])
 
 #[cfg(test)]
 mod test {
+    use std::convert::TryInto;
+
     use super::*;
 
     #[test]
@@ -765,6 +787,26 @@ mod test {
                 RESPDataType::Error,
                 RESPDataType::Array
             )),
+        );
+    }
+
+    #[test]
+    fn test_try_into_array() {
+        let res: Result<Option<Vec<i64>>, _> =
+            RESPValue::Array(Some(vec![RESPValue::Integer(123), RESPValue::Integer(456)]))
+                .try_into();
+        assert_eq!(res, Ok(Some(vec![123, 456])));
+    }
+
+    #[test]
+    fn test_try_into_array_fails() {
+        let res: Result<Option<Vec<i64>>, _> = RESPValue::Integer(123).try_into();
+        assert_eq!(
+            res,
+            Err(RESPValueConversionError::DataTypeMismatch(
+                RESPDataType::Array,
+                RESPDataType::Integer
+            ))
         );
     }
 }
